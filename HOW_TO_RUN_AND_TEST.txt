@@ -1,0 +1,581 @@
+================================================================================
+                    ZERO TRUST AWS ARCHITECTURE PROJECT
+                          HOW TO RUN AND TEST GUIDE
+================================================================================
+
+Generated: 2025-10-09T20:02:00Z
+Environment: Linux (Parrot Security)
+Project: Zero Trust Network Architecture on AWS
+
+================================================================================
+                              TABLE OF CONTENTS
+================================================================================
+
+1. Project Overview
+2. Prerequisites Installation
+3. Local Development Setup
+4. Testing the Application Locally
+5. Infrastructure Validation
+6. Docker Testing
+7. AWS Deployment Guide
+8. Production Testing
+9. Troubleshooting
+10. Maintenance and Monitoring
+
+================================================================================
+                              1. PROJECT OVERVIEW
+================================================================================
+
+This project implements a comprehensive Zero Trust network architecture on AWS,
+featuring:
+- Micro-segmentation with VPC subnets
+- Private connectivity using AWS PrivateLink
+- Identity-based access control with Amazon Cognito
+- Continuous monitoring with VPC Flow Logs and GuardDuty
+- Node.js backend API with JWT authentication
+- Docker containerization
+- Infrastructure as Code with Terraform
+
+================================================================================
+                           2. PREREQUISITES INSTALLATION
+================================================================================
+
+2.1 INSTALL REQUIRED TOOLS
+---------------------------
+
+# Update system packages
+sudo apt update && sudo apt upgrade -y
+
+# Install Node.js (if not already installed)
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+# Install Terraform
+curl -LO https://releases.hashicorp.com/terraform/1.6.3/terraform_1.6.3_linux_amd64.zip
+unzip terraform_1.6.3_linux_amd64.zip
+sudo mv terraform /usr/local/bin/
+rm terraform_1.6.3_linux_amd64.zip
+
+# Install AWS CLI (if not already installed)
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
+rm -rf aws awscliv2.zip
+
+# Install Docker (if not already installed)
+sudo apt-get install -y docker.io
+sudo systemctl start docker
+sudo systemctl enable docker
+sudo usermod -aG docker $USER
+
+# Install jq for JSON parsing (optional but helpful)
+sudo apt-get install -y jq
+
+2.2 VERIFY INSTALLATIONS
+-------------------------
+node --version          # Should show v20.x.x or higher
+npm --version           # Should show 10.x.x or higher
+terraform version       # Should show v1.6.3 or higher
+aws --version          # Should show aws-cli/2.x.x
+docker --version       # Should show Docker version 20.x.x
+
+================================================================================
+                          3. LOCAL DEVELOPMENT SETUP
+================================================================================
+
+3.1 NAVIGATE TO PROJECT DIRECTORY
+----------------------------------
+cd /home/himangshu/zero-trust-aws-architecture
+
+3.2 SETUP BACKEND APPLICATION
+------------------------------
+cd application/backend
+
+# Copy environment configuration
+cp .env.example .env
+
+# Install dependencies
+npm install
+
+# Verify installation
+npm list --depth=0
+
+3.3 CONFIGURE ENVIRONMENT VARIABLES
+------------------------------------
+# Edit .env file with your preferred editor
+nano .env
+
+# Key variables to configure:
+NODE_ENV=development
+PORT=8080
+LOG_LEVEL=info
+AWS_REGION=us-west-2
+PROJECT_NAME=zero-trust-arch
+ENVIRONMENT=dev
+
+# For AWS deployment, you'll also need:
+# COGNITO_USER_POOL_ID=us-west-2_XXXXXXXXX
+# COGNITO_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxx
+
+================================================================================
+                        4. TESTING THE APPLICATION LOCALLY
+================================================================================
+
+4.1 START THE BACKEND SERVER
+-----------------------------
+# Method 1: Direct start (foreground)
+npm start
+
+# Method 2: Background process with logging
+nohup npm start > server.log 2>&1 &
+
+# Method 3: Development mode with auto-reload
+npm run dev
+
+4.2 BASIC FUNCTIONALITY TESTS
+------------------------------
+# Test 1: Health Check (should return 200 OK)
+curl http://localhost:8080/health
+
+# Test 2: Pretty JSON output
+curl -s http://localhost:8080/health | jq .
+
+# Expected output:
+# {
+#   "status": "healthy",
+#   "timestamp": "2025-10-09T20:00:00.000Z",
+#   "version": "1.0.0",
+#   "environment": "development"
+# }
+
+4.3 ZERO TRUST STATUS TEST
+---------------------------
+# Test Zero Trust infrastructure status
+curl -s http://localhost:8080/api/zero-trust-status | jq .
+
+# Expected: Should return AWS service status (will show errors without AWS credentials)
+
+4.4 AUTHENTICATION TESTS
+-------------------------
+# Test 1: Protected endpoint without token (should return 401)
+curl -w "%{http_code}" http://localhost:8080/api/protected/dashboard
+
+# Test 2: Protected endpoint with invalid token (should return 401)
+curl -w "%{http_code}" -H "Authorization: Bearer invalid-token" \
+     http://localhost:8080/api/protected/dashboard
+
+# Test 3: Check response headers for security
+curl -I http://localhost:8080/health
+
+4.5 PERFORMANCE TESTING
+------------------------
+# Simple response time test
+curl -w "Response time: %{time_total}s\n" -o /dev/null -s http://localhost:8080/health
+
+# Load test (10 concurrent requests)
+for i in {1..10}; do
+    curl -s -w "%{time_total}\n" -o /dev/null http://localhost:8080/health &
+done
+wait
+
+# Calculate average response time
+for i in {1..10}; do 
+    curl -s -w "%{time_total}\n" -o /dev/null http://localhost:8080/health; 
+done | awk '{sum+=$1; count++} END {print "Average:", sum/count "s"}'
+
+4.6 SECURITY HEADERS VERIFICATION
+----------------------------------
+# Check all security headers
+curl -I http://localhost:8080/health | grep -E "(Security|Policy|Protection|Frame|Content)"
+
+# Expected headers:
+# Content-Security-Policy: (should be present)
+# Strict-Transport-Security: (should be present)
+# X-Content-Type-Options: nosniff
+# X-Frame-Options: SAMEORIGIN
+# X-XSS-Protection: 0
+
+4.7 RATE LIMITING TEST
+----------------------
+# Test rate limiting (should start blocking after 100 requests)
+for i in {1..105}; do
+    echo "Request $i: $(curl -s -w "%{http_code}" -o /dev/null http://localhost:8080/health)"
+done
+
+4.8 STOP THE SERVER
+-------------------
+# If running in foreground: Ctrl+C
+
+# If running in background:
+pkill -f "node server.js"
+# OR
+kill $(ps aux | grep 'node server.js' | grep -v grep | awk '{print $2}')
+
+================================================================================
+                         5. INFRASTRUCTURE VALIDATION
+================================================================================
+
+5.1 TERRAFORM VALIDATION
+-------------------------
+cd terraform
+
+# Initialize Terraform
+terraform init
+
+# Format code
+terraform fmt
+
+# Validate configuration
+terraform validate
+
+# Check formatting
+terraform fmt -check
+
+5.2 TERRAFORM PLANNING (DRY RUN)
+---------------------------------
+# Create terraform.tfvars from example
+cp terraform.tfvars.example terraform.tfvars
+
+# Edit terraform.tfvars (IMPORTANT: Update with your values)
+nano terraform.tfvars
+
+# Key values to update:
+# aws_region = "us-west-2"
+# allowed_cidr_blocks = ["YOUR_IP/32"]  # Replace YOUR_IP with your actual IP
+
+# Create execution plan (no resources will be created)
+terraform plan -out=tfplan
+
+# Review the plan
+terraform show tfplan
+
+5.3 DEPLOYMENT SCRIPTS VALIDATION
+----------------------------------
+cd ../scripts
+
+# Check script syntax
+bash -n deploy.sh
+bash -n deploy-application.sh
+
+# Check permissions
+ls -la *.sh
+
+# Make executable if needed
+chmod +x deploy.sh deploy-application.sh
+
+================================================================================
+                              6. DOCKER TESTING
+================================================================================
+
+6.1 BUILD DOCKER IMAGE
+-----------------------
+cd application/backend
+
+# Build the Docker image
+npm run docker:build
+# OR
+docker build -t zero-trust-backend .
+
+6.2 TEST DOCKER IMAGE
+----------------------
+# Run container in background
+docker run -d -p 8080:8080 --name zero-trust-test zero-trust-backend
+
+# Test health check
+sleep 5
+curl http://localhost:8080/health
+
+# Check container logs
+docker logs zero-trust-test
+
+# Check container status
+docker ps
+
+6.3 DOCKER HEALTH CHECK TEST
+-----------------------------
+# Check container health status
+docker inspect zero-trust-test | jq '.[0].State.Health'
+
+# Wait for health check to complete
+sleep 30
+docker inspect zero-trust-test | jq '.[0].State.Health.Status'
+
+6.4 CLEANUP DOCKER
+-------------------
+# Stop and remove container
+docker stop zero-trust-test
+docker rm zero-trust-test
+
+# Remove image (optional)
+docker rmi zero-trust-backend
+
+================================================================================
+                           7. AWS DEPLOYMENT GUIDE
+================================================================================
+
+7.1 AWS CREDENTIALS SETUP
+--------------------------
+# Option 1: Interactive configuration
+aws configure
+
+# Option 2: Environment variables
+export AWS_ACCESS_KEY_ID=your_access_key
+export AWS_SECRET_ACCESS_KEY=your_secret_key
+export AWS_DEFAULT_REGION=us-west-2
+
+# Option 3: IAM Role (for EC2 instances)
+# No additional configuration needed if running on EC2 with proper IAM role
+
+# Verify credentials
+aws sts get-caller-identity
+
+7.2 INFRASTRUCTURE DEPLOYMENT
+------------------------------
+cd scripts
+
+# Deploy infrastructure
+./deploy.sh
+
+# The script will:
+# 1. Check prerequisites
+# 2. Validate Terraform configuration
+# 3. Create deployment plan
+# 4. Apply infrastructure changes
+# 5. Display outputs
+
+# Monitor deployment progress
+tail -f terraform.log  # If logging is enabled
+
+7.3 APPLICATION DEPLOYMENT
+---------------------------
+# Deploy application to ECS
+./deploy-application.sh deploy
+
+# The script will:
+# 1. Build Docker image
+# 2. Push to ECR
+# 3. Deploy to ECS Fargate
+# 4. Create test user in Cognito
+# 5. Run integration tests
+
+================================================================================
+                           8. PRODUCTION TESTING
+================================================================================
+
+8.1 INFRASTRUCTURE VALIDATION
+------------------------------
+# Check VPC Flow Logs
+aws logs describe-log-groups --log-group-name-prefix "/aws/vpc/flowlogs"
+
+# Check GuardDuty status
+aws guardduty list-detectors
+
+# Check VPC endpoints
+aws ec2 describe-vpc-endpoints --query 'VpcEndpoints[*].{Service:ServiceName,State:State}'
+
+# Check security groups
+aws ec2 describe-security-groups --query 'SecurityGroups[*].{GroupId:GroupId,GroupName:GroupName}'
+
+8.2 APPLICATION TESTING
+------------------------
+# Get ALB DNS name from Terraform outputs
+cd terraform
+ALB_DNS=$(terraform output -raw alb_dns_name)
+
+# Test health check
+curl http://$ALB_DNS/health
+
+# Test Zero Trust status
+curl http://$ALB_DNS/api/zero-trust-status
+
+# Test authentication (should return 401)
+curl -w "%{http_code}" http://$ALB_DNS/api/protected/dashboard
+
+8.3 MONITORING TESTS
+---------------------
+# Check CloudWatch metrics
+aws cloudwatch get-metric-statistics \
+    --namespace AWS/ApplicationELB \
+    --metric-name RequestCount \
+    --start-time $(date -d '1 hour ago' -u +%Y-%m-%dT%H:%M:%S) \
+    --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
+    --period 300 \
+    --statistics Sum
+
+# Check GuardDuty findings
+DETECTOR_ID=$(aws guardduty list-detectors --query 'DetectorIds[0]' --output text)
+aws guardduty list-findings --detector-id $DETECTOR_ID
+
+8.4 SECURITY TESTING
+---------------------
+# Test rate limiting
+for i in {1..110}; do
+    echo "Request $i: $(curl -s -w "%{http_code}" -o /dev/null http://$ALB_DNS/health)"
+    sleep 0.1
+done
+
+# Test SQL injection protection (should be blocked)
+curl -X POST http://$ALB_DNS/api/protected/dashboard \
+     -H "Content-Type: application/json" \
+     -d '{"query": "SELECT * FROM users WHERE id = 1; DROP TABLE users;"}'
+
+================================================================================
+                            9. TROUBLESHOOTING
+================================================================================
+
+9.1 COMMON ISSUES AND SOLUTIONS
+--------------------------------
+
+ISSUE: "npm install" fails
+SOLUTION: 
+- Check Node.js version: node --version (should be 18+)
+- Clear npm cache: npm cache clean --force
+- Delete node_modules and package-lock.json, then reinstall
+
+ISSUE: Server won't start
+SOLUTION:
+- Check if port 8080 is already in use: lsof -i :8080
+- Kill existing processes: pkill -f "node server.js"
+- Check server.log for error messages
+
+ISSUE: Terraform validation fails
+SOLUTION:
+- Run terraform init
+- Check AWS credentials: aws sts get-caller-identity
+- Verify terraform.tfvars configuration
+
+ISSUE: Docker build fails
+SOLUTION:
+- Check Docker daemon: sudo systemctl status docker
+- Check disk space: df -h
+- Clean Docker cache: docker system prune
+
+ISSUE: AWS deployment fails
+SOLUTION:
+- Verify AWS credentials and permissions
+- Check AWS service limits
+- Review CloudTrail logs for error details
+
+9.2 LOG LOCATIONS
+------------------
+- Application logs: application/backend/server.log
+- Terraform logs: terraform/terraform.log
+- Docker logs: docker logs <container_name>
+- AWS CloudWatch logs: /aws/ecs/zero-trust-arch-dev
+
+9.3 DEBUGGING COMMANDS
+----------------------
+# Check running processes
+ps aux | grep node
+
+# Check network connections
+netstat -tulpn | grep :8080
+
+# Check system resources
+top
+free -h
+df -h
+
+# Check Docker containers
+docker ps -a
+docker images
+
+# Check AWS resources
+aws sts get-caller-identity
+aws ec2 describe-instances
+aws ecs list-clusters
+
+================================================================================
+                        10. MAINTENANCE AND MONITORING
+================================================================================
+
+10.1 REGULAR MAINTENANCE
+------------------------
+# Update dependencies
+npm update
+npm audit fix
+
+# Update Terraform providers
+terraform init -upgrade
+
+# Update Docker base images
+docker pull node:18-alpine
+
+10.2 MONITORING SETUP
+---------------------
+# Set up CloudWatch alarms
+aws cloudwatch put-metric-alarm \
+    --alarm-name "HighResponseTime" \
+    --alarm-description "Alert when response time is too high" \
+    --metric-name ResponseTime \
+    --namespace AWS/ApplicationELB \
+    --statistic Average \
+    --period 300 \
+    --threshold 5.0 \
+    --comparison-operator GreaterThanThreshold
+
+# Subscribe to SNS notifications
+aws sns subscribe \
+    --topic-arn arn:aws:sns:us-west-2:123456789012:zero-trust-alerts \
+    --protocol email \
+    --notification-endpoint your-email@company.com
+
+10.3 BACKUP AND RECOVERY
+------------------------
+# Backup Terraform state
+cp terraform/terraform.tfstate terraform/terraform.tfstate.backup
+
+# Export environment variables
+env | grep -E "(AWS_|NODE_|PORT)" > environment.backup
+
+# Database backup (if using RDS)
+aws rds create-db-snapshot \
+    --db-instance-identifier zero-trust-db \
+    --db-snapshot-identifier zero-trust-db-$(date +%Y%m%d)
+
+================================================================================
+                              QUICK REFERENCE
+================================================================================
+
+LOCAL TESTING COMMANDS:
+------------------------
+cd /home/himangshu/zero-trust-aws-architecture/application/backend
+npm install
+npm start
+curl http://localhost:8080/health
+
+DOCKER TESTING:
+---------------
+npm run docker:build
+docker run -d -p 8080:8080 zero-trust-backend
+curl http://localhost:8080/health
+
+TERRAFORM VALIDATION:
+---------------------
+cd terraform
+terraform init
+terraform validate
+terraform plan
+
+AWS DEPLOYMENT:
+---------------
+aws configure
+cd scripts
+./deploy.sh
+./deploy-application.sh deploy
+
+CLEANUP:
+--------
+pkill -f "node server.js"
+docker stop $(docker ps -q)
+terraform destroy
+
+================================================================================
+
+For additional support or questions, refer to the documentation in the docs/ 
+directory or check the TEST_REPORT.md file for detailed testing results.
+
+Project Repository: /home/himangshu/zero-trust-aws-architecture
+Last Updated: 2025-10-09T20:02:00Z
+
+================================================================================

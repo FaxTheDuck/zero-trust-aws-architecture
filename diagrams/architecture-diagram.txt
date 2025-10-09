@@ -1,0 +1,192 @@
+# Zero Trust Network Architecture Diagram
+
+```
+🌐 INTERNET
+    │
+    │ HTTPS/HTTP
+    ▼
+┌───────────────────────────────────────────────────────────────┐
+│                        PUBLIC SUBNET (DMZ)                   │
+│                     10.0.1.0/24, 10.0.2.0/24               │
+├───────────────────────────────────────────────────────────────┤
+│  🔧 Bastion Host           📊 Application Load Balancer      │
+│  (SSH Access)              (WAF Protected)                    │
+│     │                           │                            │
+│     │ SSH (Port 22)            │ HTTP/HTTPS                  │
+│     ▼                           ▼                            │
+└─────┼───────────────────────────┼────────────────────────────┘
+      │                           │
+      │ 🛡 Security Groups: Bastion & ALB
+      │                           │
+      ▼                           ▼
+┌─────┼───────────────────────────┼────────────────────────────┐
+│     │      PRIVATE APP SUBNET (INTERNAL)                    │
+│     │         10.0.10.0/24, 10.0.11.0/24                  │
+├─────┼───────────────────────────┼────────────────────────────┤
+│     │                           │                            │
+│     ▼                           ▼                            │
+│  💻 App Servers          📦 Container Services               │
+│  (EC2 Instances)         (ECS/EKS)                          │
+│     │                           │                            │
+│     │ Database Port (5432)     │ Database Port (5432)       │
+│     ▼                           ▼                            │
+└─────┼───────────────────────────┼────────────────────────────┘
+      │                           │
+      │ 🛡 Security Groups: App Tier
+      │                           │
+      ▼                           ▼
+┌─────┼───────────────────────────┼────────────────────────────┐
+│     │         PRIVATE DB SUBNET (RESTRICTED)                │
+│     │           10.0.20.0/24, 10.0.21.0/24                │
+├─────┼───────────────────────────┼────────────────────────────┤
+│     │                           │                            │
+│     ▼                           ▼                            │
+│  🗄️ RDS Database         🔐 ElastiCache                     │
+│  (PostgreSQL)           (Redis)                             │
+│                                                              │
+│  ❌ NO INTERNET ACCESS - Completely Isolated                │
+└──────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════
+
+🔐 ZERO TRUST COMPONENTS:
+
+┌─────────────────────────────────────────────────────────────┐
+│                    IDENTITY & ACCESS                        │
+├─────────────────────────────────────────────────────────────┤
+│  👤 Amazon Cognito          🔑 IAM Roles & Policies        │
+│  - User Pools               - EC2 Instance Roles           │
+│  - Identity Pools           - Lambda Execution Roles       │
+│  - MFA Enabled              - Condition-based Policies     │
+│  - JWT Tokens               - VPC-restricted Access        │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│                   PRIVATE CONNECTIVITY                     │
+├─────────────────────────────────────────────────────────────┤
+│  🔗 VPC Endpoints (PrivateLink)                            │
+│  ├─ S3 Gateway Endpoint          ├─ CloudWatch Logs        │
+│  ├─ DynamoDB Gateway Endpoint    ├─ Systems Manager        │
+│  ├─ EC2 Interface Endpoint       ├─ Secrets Manager        │
+│  └─ KMS Interface Endpoint       └─ ECR (API & DKR)        │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│                    MONITORING & SECURITY                   │
+├─────────────────────────────────────────────────────────────┤
+│  📊 VPC Flow Logs              🛡️ Amazon GuardDuty          │
+│  📈 CloudWatch Dashboard       🔍 AWS Config Rules          │
+│  🚨 Security Alerts (SNS)      📋 AWS CloudTrail           │
+│  🎯 Custom Metric Filters      🔐 Security Hub             │
+└─────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════
+
+🔒 SECURITY LAYERS:
+
+Layer 1: Network ACLs (Subnet Level)
+├─ Public: Allow HTTP/HTTPS in, App ports out
+├─ App: Allow App ports in, DB ports out  
+└─ DB: Allow DB ports in, Ephemeral out
+
+Layer 2: Security Groups (Instance Level)
+├─ ALB: Internet → ALB, ALB → App
+├─ App: ALB → App, App → DB
+├─ DB: App → DB only
+└─ VPC Endpoints: Private subnets → AWS services
+
+Layer 3: IAM (Identity Level)
+├─ Cognito: User authentication & authorization
+├─ Instance Roles: Service-specific permissions
+├─ Conditional Policies: VPC/IP restrictions
+└─ Resource-based Policies: Deny external access
+
+═══════════════════════════════════════════════════════════════
+
+🚦 TRAFFIC FLOW EXAMPLES:
+
+✅ ALLOWED FLOWS:
+Internet → ALB → App Server → Database
+App Server → VPC Endpoints → AWS Services
+Bastion Host → App Server (SSH)
+CloudWatch/GuardDuty → SNS Alerts
+
+❌ BLOCKED FLOWS:
+Internet → App Server (Direct)
+Internet → Database (Direct)
+App Server → Internet (Direct, use NAT/Endpoints)
+Database → Internet (No route)
+Cross-subnet lateral movement (unless explicit)
+
+═══════════════════════════════════════════════════════════════
+
+📊 MONITORING DASHBOARD WIDGETS:
+
+┌─────────────────────┬─────────────────────┬─────────────────────┐
+│   Network Metrics   │  Rejected Connects  │  External IPs       │
+│  ┌─────────────────┐ │ ┌─────────────────┐ │ ┌─────────────────┐ │
+│  │ ▲ Bytes In      │ │ │ 192.168.1.1     │ │ │ 203.0.113.1     │ │
+│  │ ▼ Bytes Out     │ │ │ 10.0.50.1       │ │ │ 198.51.100.1    │ │
+│  │ ■ Dropped Pkts  │ │ │ 172.16.1.1      │ │ │ 93.184.216.34   │ │
+│  └─────────────────┘ │ └─────────────────┘ │ └─────────────────┘ │
+└─────────────────────┴─────────────────────┴─────────────────────┘
+
+═══════════════════════════════════════════════════════════════
+
+🏷️ RESOURCE TAGGING STRATEGY:
+
+All resources tagged with:
+├─ Project: "Zero-Trust-Architecture"
+├─ Environment: "dev/staging/prod"  
+├─ ManagedBy: "Terraform"
+├─ Architecture: "Zero-Trust"
+├─ Security: "High"
+├─ Compliance: "Required"
+└─ Owner: "security-team"
+
+═══════════════════════════════════════════════════════════════
+```
+
+## Network Flow Details
+
+### Ingress Traffic Flow
+1. **Internet** → **ALB** (Public Subnet)
+   - Ports: 80, 443
+   - Protection: WAF, Security Groups
+
+2. **ALB** → **App Servers** (Private Subnet)
+   - Port: 8080 (configurable)
+   - Security: ALB → App security group reference
+
+3. **App Servers** → **Database** (Private DB Subnet)
+   - Port: 5432 (PostgreSQL)
+   - Security: App → DB security group reference
+
+### Egress Traffic Flow
+1. **App Servers** → **AWS Services**
+   - Via: VPC Endpoints (PrivateLink)
+   - Services: S3, DynamoDB, CloudWatch, etc.
+
+2. **App Servers** → **Internet** (if needed)
+   - Via: NAT Gateway (limited use)
+   - Ports: 80, 443 only
+
+3. **Database** → **Nowhere**
+   - Complete isolation from internet
+   - Internal VPC communication only
+
+### Administrative Access
+1. **SSH Access** → **Bastion** → **App Servers**
+   - Bastion in public subnet
+   - Restricted source IPs
+   - MFA recommended
+
+## Zero Trust Validation Points
+
+- ✅ **No Trust Zones**: Each layer explicitly verified
+- ✅ **Least Privilege**: Minimum required access only
+- ✅ **Micro-segmentation**: Network isolation between tiers  
+- ✅ **Identity Verification**: Cognito + IAM integration
+- ✅ **Continuous Monitoring**: Flow logs + GuardDuty
+- ✅ **Encrypted Transit**: HTTPS/TLS everywhere
+- ✅ **Private Connectivity**: PrivateLink for AWS services

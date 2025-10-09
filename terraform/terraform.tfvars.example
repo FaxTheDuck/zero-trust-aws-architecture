@@ -1,0 +1,41 @@
+# Example Terraform Variables for Zero Trust Architecture
+# Copy this file to terraform.tfvars and modify the values as needed
+
+# Basic Configuration
+aws_region     = "us-west-2"
+environment    = "dev"
+project_name   = "zero-trust-arch"
+project_owner  = "security-team"
+
+# Network Configuration
+vpc_cidr                    = "10.0.0.0/16"
+availability_zones_count    = 2
+public_subnet_cidrs        = ["10.0.1.0/24", "10.0.2.0/24"]
+private_app_subnet_cidrs   = ["10.0.10.0/24", "10.0.11.0/24"]
+private_db_subnet_cidrs    = ["10.0.20.0/24", "10.0.21.0/24"]
+
+# Security Configuration
+allowed_cidr_blocks = ["0.0.0.0/0"]  # IMPORTANT: Restrict this in production
+db_port            = 5432            # PostgreSQL
+app_port           = 8080
+web_port           = 80
+https_port         = 443
+
+# Monitoring Configuration
+enable_flow_logs           = true
+enable_guardduty          = true
+flow_logs_retention_days  = 30
+
+# Cognito Configuration
+cognito_user_pool_name     = "zero-trust-users"
+cognito_identity_pool_name = "zero-trust-identities"
+
+# Common Tags
+common_tags = {
+  Architecture = "Zero-Trust"
+  Security     = "High"
+  Compliance   = "Required"
+  CostCenter   = "Security"
+  Owner        = "security-team@company.com"
+  Project      = "Zero-Trust-Implementation"
+}
